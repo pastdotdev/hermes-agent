@@ -626,13 +626,15 @@ async def pty_ws(ws: WebSocket) -> None:
                 _discard_active_session_file(ws.app, channel, active_session_file)
             await _pty_fail(ws, exc)
             return
-        await _legacy_pump(ws, bridge)
-        # The 1:1 PTY died with this socket; nothing survives to keep the
-        # breadcrumb, so drop the marker instead of leaking the entry (#63553).
-        # A preexisting marker belongs to a live keep-alive PTY on this channel
-        # — only the marker this handler allocated is ours to drop.
-        if not marker_preexisting:
-            _discard_active_session_file(ws.app, channel, active_session_file)
+        try:
+            await _legacy_pump(ws, bridge)
+        finally:
+            # The 1:1 PTY died with this socket; nothing survives to keep the breadcrumb, so drop the marker
+            # instead of leaking the entry (#63553). In a finally: a client disconnect cancels this handler while
+            # the pump is still awaiting bridge.close, and the marker must go on that path too. A preexisting
+            # marker belongs to a live keep-alive PTY on this channel — only the one this handler allocated is ours.
+            if not marker_preexisting:
+                _discard_active_session_file(ws.app, channel, active_session_file)
         return
 
     # Keep-alive path: the PTY outlives this socket; reattach by token.

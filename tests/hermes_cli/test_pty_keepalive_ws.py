@@ -203,10 +203,15 @@ async def test_channel_marker_reconnect_reuses_one_entry(pty_keepalive_harness):
 
 
 @pytest.mark.asyncio
-async def test_legacy_channel_connect_pops_marker_on_disconnect(pty_keepalive_harness):
-    """A 1:1 (no attach token) PTY dies with its socket; its marker must too."""
+@pytest.mark.parametrize("close_delay", [0.0, 0.3])
+async def test_legacy_channel_connect_pops_marker_on_disconnect(pty_keepalive_harness, monkeypatch, close_delay):
+    """A 1:1 (no attach token) PTY dies with its socket; its marker must too — including when the disconnect
+    cancels the handler while the pump is still awaiting a slow ``bridge.close`` (the CI flake's timing)."""
     from starlette.testclient import TestClient
+    import time
 
+    if close_delay:
+        monkeypatch.setattr(FakeBridge, "close", lambda self: (time.sleep(close_delay), setattr(self, "alive", False)))
     markers = _pty_marker_dict()
     markers.clear()
     client = TestClient(web_server.app)
@@ -217,8 +222,6 @@ async def test_legacy_channel_connect_pops_marker_on_disconnect(pty_keepalive_ha
 
     # The handler pops the marker after _legacy_pump returns, which can lag the
     # client-side context exit by a tick — poll instead of asserting immediately.
-    import time
-
     deadline = time.monotonic() + 5.0
     while "LEGACY63553" in markers and time.monotonic() < deadline:
         time.sleep(0.01)
